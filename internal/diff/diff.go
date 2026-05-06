@@ -1,65 +1,59 @@
 package diff
 
-import (
-	"sort"
+import "sort"
 
-	"github.com/user/envdiff/internal/parser"
+// Status describes the kind of difference found for a key.
+type Status string
+
+const (
+	MissingInA Status = "missing_in_a"
+	MissingInB Status = "missing_in_b"
+	Mismatch    Status = "mismatch"
+	Match       Status = "match"
 )
 
-// Result holds the outcome of comparing two EnvMaps.
+// Result holds the comparison outcome for a single key.
 type Result struct {
-	// MissingInB contains keys present in A but absent in B.
-	MissingInB []string
-	// MissingInA contains keys present in B but absent in A.
-	MissingInA []string
-	// Mismatched contains keys present in both but with different values.
-	Mismatched []MismatchedKey
+	Key     string `json:"key"`
+	Status  Status `json:"status"`
+	ValueA  string `json:"value_a,omitempty"`
+	ValueB  string `json:"value_b,omitempty"`
 }
 
-// MismatchedKey represents a key whose value differs between two env files.
-type MismatchedKey struct {
-	Key    string
-	ValueA string
-	ValueB string
-}
+// Compare compares two env maps and returns a sorted list of Results.
+// Only non-matching entries are returned unless includeMatches is true.
+func Compare(a, b map[string]string) []Result {
+	keys := unionKeys(a, b)
+	sort.Strings(keys)
 
-// IsClean returns true when there are no differences between the two env maps.
-func (r Result) IsClean() bool {
-	return len(r.MissingInA) == 0 &&
-		len(r.MissingInB) == 0 &&
-		len(r.Mismatched) == 0
-}
+	var results []Result
+	for _, k := range keys {
+		va, inA := a[k]
+		vb, inB := b[k]
 
-// Compare analyses two EnvMaps and returns a Result describing their differences.
-func Compare(a, b parser.EnvMap) Result {
-	result := Result{}
-
-	for key, valA := range a {
-		valB, ok := b[key]
-		if !ok {
-			result.MissingInB = append(result.MissingInB, key)
-			continue
-		}
-		if valA != valB {
-			result.Mismatched = append(result.Mismatched, MismatchedKey{
-				Key:    key,
-				ValueA: valA,
-				ValueB: valB,
-			})
+		switch {
+		case !inA:
+			results = append(results, Result{Key: k, Status: MissingInA, ValueB: vb})
+		case !inB:
+			results = append(results, Result{Key: k, Status: MissingInB, ValueA: va})
+		case va != vb:
+			results = append(results, Result{Key: k, Status: Mismatch, ValueA: va, ValueB: vb})
 		}
 	}
+	return results
+}
 
-	for key := range b {
-		if _, ok := a[key]; !ok {
-			result.MissingInA = append(result.MissingInA, key)
-		}
+func unionKeys(a, b map[string]string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	for k := range a {
+		seen[k] = struct{}{}
 	}
-
-	sort.Strings(result.MissingInA)
-	sort.Strings(result.MissingInB)
-	sort.Slice(result.Mismatched, func(i, j int) bool {
-		return result.Mismatched[i].Key < result.Mismatched[j].Key
-	})
-
-	return result
+	for k := range b {
+		seen[k] = struct{}{}
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	return keys
 }
